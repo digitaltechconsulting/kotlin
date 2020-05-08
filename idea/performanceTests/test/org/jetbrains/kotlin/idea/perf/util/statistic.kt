@@ -5,7 +5,11 @@
 
 package org.jetbrains.kotlin.idea.perf.util
 
+import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer
+import com.intellij.codeInsight.daemon.DaemonCodeAnalyzerSettings
+import com.intellij.codeInsight.daemon.impl.DaemonCodeAnalyzerImpl
 import com.intellij.codeInsight.daemon.impl.HighlightInfo
+import com.intellij.ide.startup.impl.StartupManagerImpl
 import com.intellij.idea.IdeaTestApplication
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.runWriteAction
@@ -17,13 +21,16 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.projectRoots.JavaSdk
 import com.intellij.openapi.projectRoots.Sdk
 import com.intellij.openapi.projectRoots.impl.JavaAwareProjectJdkTableImpl
+import com.intellij.openapi.startup.StartupManager
 import com.intellij.psi.PsiDocumentManager
 import com.intellij.psi.PsiFile
 import com.intellij.psi.PsiManager
+import com.intellij.testFramework.RunAll
 import com.intellij.testFramework.TestDataProvider
 import com.intellij.testFramework.UsefulTestCase
 import com.intellij.testFramework.fixtures.impl.CodeInsightTestFixtureImpl
 import com.intellij.util.ArrayUtilRt
+import com.intellij.util.ThrowableRunnable
 import com.intellij.util.indexing.UnindexedFilesUpdater
 import org.jetbrains.kotlin.idea.framework.KotlinSdkType
 import org.jetbrains.kotlin.idea.perf.Stats
@@ -62,7 +69,7 @@ class Statistic {
     }
 
     class StatsScope(val config: StatsScopeConfig, val stats: Stats, val rootDisposable: Disposable) {
-        fun app(f: ApplicationScope.() -> Unit) = ApplicationScope(rootDisposable, this).f()
+        fun app(f: ApplicationScope.() -> Unit) = ApplicationScope(rootDisposable, this).use(f)
 
         fun <T> measure(name: String, f: MeasurementScope<T>.() -> Unit): List<T?> =
             MeasurementScope<T>(name, stats, config).apply(f).run()
@@ -101,18 +108,22 @@ class Statistic {
         }
     }
 
-    class ApplicationScope(val rootDisposable: Disposable, val stats: StatsScope) {
+    class ApplicationScope(val rootDisposable: Disposable, val stats: StatsScope) : AutoCloseable {
         val application = initApp(rootDisposable)
         val jdk: Sdk = initSdk(rootDisposable)
 
         fun project(externalProject: ExternalProject, refresh: Boolean = false, block: ProjectScope.() -> Unit) =
-            ProjectScope(ProjectScopeConfig(externalProject, refresh), this).block()
+            ProjectScope(ProjectScopeConfig(externalProject, refresh), this).use(block)
 
         fun project(path: String, openWith: ProjectOpenAction = ProjectOpenAction.EXISTING_IDEA_PROJECT, block: ProjectScope.() -> Unit) =
-            ProjectScope(ProjectScopeConfig(path, openWith), this).block()
+            ProjectScope(ProjectScopeConfig(path, openWith), this).use(block)
 
         fun gradleProject(path: String, refresh: Boolean = false, block: ProjectScope.() -> Unit) =
-            ProjectScope(ProjectScopeConfig(path, ProjectOpenAction.GRADLE_PROJECT, refresh), this).block()
+            ProjectScope(ProjectScopeConfig(path, ProjectOpenAction.GRADLE_PROJECT, refresh), this).use(block)
+
+        override fun close() {
+            application?.setDataProvider(null)
+        }
 
         companion object {
             private fun initApp(rootDisposable: Disposable): TestApplicationManager? {
@@ -153,7 +164,7 @@ class Statistic {
         constructor(externalProject: ExternalProject, refresh: Boolean) : this(externalProject.path, externalProject.openWith, refresh)
     }
 
-    class ProjectScope(val config: ProjectScopeConfig, val app: ApplicationScope) {
+    class ProjectScope(val config: ProjectScopeConfig, val app: ApplicationScope) : AutoCloseable {
         val project: Project = initProject(config, app)
 
         fun highlight(editorFile: EditorFile?) =
@@ -175,6 +186,18 @@ class Statistic {
         fun <T> measure(vararg name: String, f: MeasurementScope<T>.() -> Unit): List<T?> {
             val after = { PsiManager.getInstance(project).dropPsiCaches() }
             return app.stats.measure("${app.stats.stats.name}-${name.joinToString("-")}", f, after)
+        }
+
+        override fun close() {
+            RunAll(
+                ThrowableRunnable {
+                    if (project != null) {
+                        DaemonCodeAnalyzerSettings.getInstance().isImportHintEnabled = true // return default value to avoid unnecessary save
+                        (StartupManager.getInstance(project) as StartupManagerImpl).checkCleared()
+                        (DaemonCodeAnalyzer.getInstance(project) as DaemonCodeAnalyzerImpl).cleanupAfterTest()
+                        closeProject(project)
+                    }
+                }).run()
         }
 
         companion object {
