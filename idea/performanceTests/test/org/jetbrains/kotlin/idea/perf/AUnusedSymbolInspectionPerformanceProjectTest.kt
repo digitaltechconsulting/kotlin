@@ -15,7 +15,7 @@ import org.jetbrains.kotlin.test.JUnit3RunnerWithInners
 import org.junit.runner.RunWith
 
 @RunWith(JUnit3RunnerWithInners::class)
-class UnusedSymbolInspectionPerformanceProjectTest : UsefulTestCase() {
+class AUnusedSymbolInspectionPerformanceProjectTest : UsefulTestCase() {
     val listOfFiles = arrayOf(
         "libraries/tools/kotlin-gradle-plugin-integration-tests/src/test/kotlin/org/jetbrains/kotlin/gradle/NewMultiplatformIT.kt",
         "idea/idea-analysis/src/org/jetbrains/kotlin/idea/util/PsiPrecedences.kt",
