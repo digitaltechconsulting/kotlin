@@ -28,7 +28,7 @@ class AUnusedSymbolInspectionPerformanceProjectTest : UsefulTestCase() {
     fun testLocalInspection() {
         statisticSuite {
             app {
-                project(ExternalProject.KOTLIN_GRADLE) {
+                project(ExternalProject.KOTLIN_AUTO) {
                     for (inspection in listOfInspections) {
                         enableSingleInspection(inspection)
                         for (file in listOfFiles) {

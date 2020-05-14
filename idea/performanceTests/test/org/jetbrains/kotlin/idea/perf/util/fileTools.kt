@@ -5,6 +5,7 @@
 
 package org.jetbrains.kotlin.idea.perf.util
 
+import com.intellij.util.io.exists
 import java.nio.file.Paths
 
 fun String.lastPathSegment() =
@@ -12,3 +13,6 @@ fun String.lastPathSegment() =
 
 fun pwd() =
     Paths.get("").toAbsolutePath().toString()
+
+fun exists(path: String, vararg paths: String) =
+    Paths.get(path, *paths).toAbsolutePath().exists()

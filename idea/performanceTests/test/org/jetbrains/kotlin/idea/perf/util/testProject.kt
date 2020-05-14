@@ -9,7 +9,17 @@ import org.jetbrains.kotlin.idea.testFramework.ProjectOpenAction
 
 class ExternalProject private constructor(val path: String, val openWith: ProjectOpenAction) {
     companion object {
-        val KOTLIN_GRADLE = ExternalProject("../perfTestProject", ProjectOpenAction.GRADLE_PROJECT)
-        val KOTLIN_JPS = ExternalProject("../perfTestProject", ProjectOpenAction.EXISTING_IDEA_PROJECT)
+        const private val KOTLIN_PROJECT_PATH = "../perfTestProject";
+
+        val KOTLIN_GRADLE = ExternalProject(KOTLIN_PROJECT_PATH, ProjectOpenAction.GRADLE_PROJECT)
+        val KOTLIN_JPS = ExternalProject(KOTLIN_PROJECT_PATH, ProjectOpenAction.EXISTING_IDEA_PROJECT)
+        val KOTLIN_AUTO = ExternalProject(KOTLIN_PROJECT_PATH, autoOpenAction(KOTLIN_PROJECT_PATH))
+
+        private fun autoOpenAction(path: String): ProjectOpenAction {
+            return if (exists(path, ".idea", "modules.xml"))
+                ProjectOpenAction.EXISTING_IDEA_PROJECT.apply { println("Opening $path in iml mode.") }
+            else
+                ProjectOpenAction.GRADLE_PROJECT.apply { println("Opening $path in Gradle mode.") }
+        }
     }
 }
