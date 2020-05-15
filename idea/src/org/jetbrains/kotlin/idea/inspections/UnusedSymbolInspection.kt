@@ -7,7 +7,6 @@ package org.jetbrains.kotlin.idea.inspections
 
 import com.intellij.codeInsight.FileModificationService
 import com.intellij.codeInsight.daemon.QuickFixBundle
-import com.intellij.codeInsight.daemon.impl.HighlightInfoType
 import com.intellij.codeInsight.daemon.impl.analysis.HighlightUtil
 import com.intellij.codeInsight.daemon.impl.analysis.JavaHighlightUtil
 import com.intellij.codeInspection.*
@@ -17,6 +16,7 @@ import com.intellij.codeInspection.ex.EntryPointsManagerBase
 import com.intellij.codeInspection.ex.EntryPointsManagerImpl
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
 import com.intellij.psi.PsiClass
@@ -33,6 +33,7 @@ import com.intellij.psi.search.searches.MethodReferencesSearch
 import com.intellij.psi.search.searches.ReferencesSearch
 import com.intellij.refactoring.safeDelete.SafeDeleteHandler
 import com.intellij.util.Processor
+import com.intellij.util.containers.addIfNotNull
 import org.jetbrains.kotlin.asJava.LightClassUtil
 import org.jetbrains.kotlin.asJava.classes.KtLightClass
 import org.jetbrains.kotlin.asJava.toLightClass
@@ -71,6 +72,7 @@ import org.jetbrains.kotlin.idea.util.ProjectRootsUtil
 import org.jetbrains.kotlin.idea.util.hasActualsFor
 import org.jetbrains.kotlin.js.resolve.diagnostics.findPsi
 import org.jetbrains.kotlin.lexer.KtTokens
+import org.jetbrains.kotlin.load.java.JvmAbi
 import org.jetbrains.kotlin.name.FqName
 import org.jetbrains.kotlin.psi.*
 import org.jetbrains.kotlin.psi.psiUtil.*
@@ -90,6 +92,10 @@ import javax.swing.JPanel
 
 class UnusedSymbolInspection : AbstractKotlinInspection() {
     companion object {
+        private val log = Logger.getInstance(
+            UnusedSymbolInspection::class.java
+        )
+
         private val javaInspection = UnusedDeclarationInspection()
 
         private val KOTLIN_ADDITIONAL_ANNOTATIONS = listOf("kotlin.test.*")
@@ -146,7 +152,7 @@ class UnusedSymbolInspection : AbstractKotlinInspection() {
             val useScope = psiSearchHelper.getUseScope(declaration)
             if (useScope is GlobalSearchScope) {
                 var zeroOccurrences = true
-                for (name in listOf(declaration.name) + declaration.getAccessorNames() + listOfNotNull(declaration.getClassNameForCompanionObject())) {
+                for (name in listOf(declaration.name) + declarationAccessorNames(declaration) + listOfNotNull(declaration.getClassNameForCompanionObject())) {
                     if (name == null) continue
                     when (psiSearchHelper.isCheapEnoughToSearchConsideringOperators(name, useScope, null, null)) {
                         ZERO_OCCURRENCES -> {
@@ -159,6 +165,54 @@ class UnusedSymbolInspection : AbstractKotlinInspection() {
                 if (zeroOccurrences) return ZERO_OCCURRENCES
             }
             return FEW_OCCURRENCES
+        }
+
+        fun declarationAccessorNames(declaration: KtNamedDeclaration): List<String> {
+            val accessors =
+                when (declaration) {
+                    is KtProperty -> listOfPropertyAccessorNames(declaration)
+                    is KtParameter -> listOfParameterAccessorNames(declaration)
+                    else -> emptyList()
+                }
+            if (log.isDebugEnabled) {
+                val resolverAccessors = declaration.getAccessorNames()
+                if (accessors != resolverAccessors)
+                    log.error(
+                        "<vladimiri> Accessor names for declaration ${declaration.text} differs: " +
+                                "$accessors vs $resolverAccessors in ${declaration.containingFile.name}"
+                    )
+            }
+            return accessors
+        }
+
+        fun listOfParameterAccessorNames(parameter: KtParameter): List<String> {
+            val accessors = mutableListOf<String>()
+            if (parameter.hasValOrVar()) {
+                parameter.name?.let {
+                    accessors.add(JvmAbi.getterName(it))
+                    if (parameter.isVarArg)
+                        accessors.add(JvmAbi.setterName(it))
+                }
+            }
+            return accessors
+        }
+
+        fun listOfPropertyAccessorNames(property: KtProperty): List<String> {
+            val accessors = mutableListOf<String>()
+            val propertyName = property.name ?: return accessors
+            accessors.addIfNotNull(property.getter?.let { getCustomAccessorName(it) } ?: JvmAbi.getterName(propertyName))
+            if (property.isVar)
+                accessors.addIfNotNull(property.setter?.let { getCustomAccessorName(it) } ?: JvmAbi.setterName(propertyName))
+            return accessors
+        }
+
+        /*
+            If the property has 'JvmName' annotation at accessor it should be used instead
+         */
+        private fun getCustomAccessorName(method: KtPropertyAccessor?): String? {
+            val customJvmNameAnnotation =
+                method?.annotationEntries?.firstOrNull { it.shortName?.asString() == "JvmName" } ?: return null
+            return customJvmNameAnnotation.findDescendantOfType<KtStringTemplateEntry>()?.text
         }
 
         private fun KtProperty.isSerializationImplicitlyUsedField(): Boolean {
